@@ -1,0 +1,201 @@
+import os
+import os.path as op
+from glob import glob
+import biosppy
+import wfdb
+import matplotlib.pyplot as plt
+import numpy as np
+import cv2
+import tensorflow as tf
+
+def get_records(folder='mit-bih-arrhythmia-database-1.0.0/'):
+    """ Get paths for data in data/mit/ directory """
+    # Download if doesn't exist
+    
+    # There are 3 files for each record
+    # *.atr is one of them
+    paths = glob(op.join(folder, '*.atr'))
+
+    # Get rid of the extension
+    paths = [path[:-4] for path in paths]
+    paths.sort()
+
+    return paths
+
+def beat_annotations(annotation):
+    """ Get rid of non-beat markers """
+    """'N' for normal beats. Similarly we can give the input 'L' for left bundle branch block beats. 'R' for right bundle branch block
+        beats. 'A' for Atrial premature contraction. 'V' for ventricular premature contraction. '/' for paced beat. 'E' for Ventricular
+        escape beat."""
+ 
+    good = ['N']   
+    ids = np.in1d(annotation.symbol, good)
+
+    # We want to know only the positions
+    beats = annotation.sample[ids]
+
+    return beats
+
+def read_record(record, select):
+    ecg_pulses = []
+    signals, fields = wfdb.rdsamp(record, channels = [0]) 
+    ann = annotation = wfdb.rdann(record, 'atr')
+    sel = [select]
+    ids = np.in1d(ann.symbol, sel)
+    imp_beats = ann.sample[ids]
+    beats = (ann.sample)
+    for i in imp_beats:
+        beats = list(beats)
+        j = beats.index(i)
+        if (j != 0 and j != (len(beats)-1)):
+            x = beats[j-1]
+            y = beats[j+1]
+            diff1 = abs(x - beats[j]) // 2
+            diff2 = abs(y - beats[j]) // 2
+            ecg_pulses.append(signals[beats[j] - diff1: beats[j] + diff2, 0])
+    return ecg_pulses
+    
+def cropping(image, filename):
+    
+    #Left Top Crop
+    crop = image[:96, :96]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'leftTop' + '.png', crop)
+    
+    #Center Top Crop
+    crop = image[:96, 16:112]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'centerTop' + '.png', crop)
+    
+    #Right Top Crop
+    crop = image[:96, 32:]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'rightTop' + '.png', crop)
+    
+    #Left Center Crop
+    crop = image[16:112, :96]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'leftCenter' + '.png', crop)
+    
+    #Center Center Crop
+    crop = image[16:112, 16:112]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'centerCenter' + '.png', crop)
+    
+    #Right Center Crop
+    crop = image[16:112, 32:]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'rightCenter' + '.png', crop)
+    
+    #Left Bottom Crop
+    crop = image[32:, :96]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'leftBottom' + '.png', crop)
+    
+    #Center Bottom Crop
+    crop = image[32:, 16:112]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'centerBottom' + '.png', crop)
+    
+    #Right Bottom Crop
+    crop = image[32:, 32:]
+    crop = cv2.resize(crop, (128, 128))
+    cv2.imwrite(filename[:-4] + 'rightBottom' + '.png', crop)
+    
+records = get_records("mit-bih-arrhythmia-database-1.0.0/")
+
+os.makedirs("mit_data/train/normal")
+os.makedirs("mit_data/train/arrhyth")
+os.makedirs("mit_data/train/vpc")
+
+save_folder_map = {
+    "A": "C://Users//Temim14//Desktop//mit_data//train//arrhyth//",
+    "N": "C://Users//Temim14//Desktop//mit_data//train//normal//",
+    "V": "C://Users//Temim14//Desktop//mit_data//train//vpc//"
+}
+
+for record in records[0:50]:
+    for sel in ["A", "N", "V"]:
+        ecg_pulses = read_record(record, select=sel)
+        r_name = record.split("\\")[-1]
+        for i in range(len(ecg_pulses))[0:100]:
+            fig = plt.figure(frameon=False)
+            plt.plot(ecg_pulses[i], linewidth=2)
+            plt.xticks([]), plt.yticks([])
+            for spine in plt.gca().spines.values():
+                spine.set_visible(False)
+                    
+        filename = save_folder_map[sel] + r_name + "_" + str(i) + '.png'
+        fig.savefig(filename)
+        im_gray = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+        im_gray = cv2.resize(im_gray, (128, 128), interpolation = cv2.INTER_LANCZOS4)
+        cv2.imwrite(filename, im_gray)
+                
+signals, fields = wfdb.rdsamp(records[0], channels=[0])
+annotation = wfdb.rdann(records[0], "atr")
+
+peaks = biosppy.signals.ecg.christov_segmenter(signal=signals.ravel(), sampling_rate=200)[0]
+signals.shape, signals.ravel().shape
+period = int((peaks[1:] - peaks[:-1]).mean())
+beat_annotations(annotation)
+
+i = 100 
+plt.plot(signals.ravel()[peaks[i] - int(period / 2): peaks[i] + int(period / 2)])
+
+
+model = tf.keras.Sequential()
+model.add(tf.keras.layers.Conv2D(64, (3,3),strides = (1,1), input_shape = IMAGE_SIZE + [3],kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(tf.keras.layers.Conv2D(64, (3,3),strides = (1,1),kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(MaxPool2D(pool_size=(2, 2), strides= (2,2)))
+
+model.add(tf.keras.layers.Conv2D(128, (3,3),strides = (1,1),kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(tf.keras.layers.Conv2D(128, (3,3),strides = (1,1),kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(MaxPool2D(pool_size=(2, 2), strides= (2,2)))
+
+model.add(tf.keras.layers.Conv2D(256, (3,3),strides = (1,1),kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(tf.keras.layers.Conv2D(256, (3,3),strides = (1,1),kernel_initializer='glorot_uniform'))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(MaxPool2D(pool_size=(2, 2), strides= (2,2)))
+
+model.add(Flatten())
+
+model.add(Dense(2048))
+
+model.add(keras.layers.ELU())
+
+model.add(BatchNormalization())
+
+model.add(Dropout(0.5))
+
+model.add(Dense(7, activation='softmax'))
+
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
